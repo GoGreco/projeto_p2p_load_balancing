@@ -4,10 +4,13 @@ import json
 import logging
 import time
 
+# Definição de conexão
 MASTER_UUID = "Master_A"
 HOST        = "0.0.0.0"   
 PORT        = 9000         
 BUFFER_SIZE = 4096
+
+#Registro de atividades
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,6 +18,8 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("Master")
+
+#Determina a resposta do heartbeaat
 
 def handle_heartbeat(payload: dict) -> dict:
     log.info("HEARTBEAT recebido de '%s'. Enviando ALIVE.", payload.get("SERVER_UUID", "???"))
@@ -30,7 +35,7 @@ TASK_HANDLERS = {
 }
 
 
-# ─── Gerenciamento de Conexao ────────────────────────────────────────────────
+# ─── Gerenciamento de Conexao 
 
 def handle_client(conn: socket.socket, addr: tuple) -> None:
     log.info("Nova conexao de %s:%s", *addr)

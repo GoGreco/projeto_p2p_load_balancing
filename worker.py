@@ -3,13 +3,17 @@ import json
 import time
 import logging
 
+#configuração de conexão
+
 WORKER_UUID        = "Worker_A1"
 MASTER_HOST        = "127.0.0.1"  
 MASTER_PORT        = 9000
-HEARTBEAT_INTERVAL = 3            
+HEARTBEAT_INTERVAL = 6            
 RECONNECT_DELAY    = 5            
 SOCKET_TIMEOUT     = 5             
 BUFFER_SIZE        = 4096
+
+#registro de atividades
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,11 +22,13 @@ logging.basicConfig(
 )
 log = logging.getLogger("Worker")
 
+#envio de informação
 
 def send_json(sock: socket.socket, payload: dict) -> None:
     data = json.dumps(payload) + "\n"
     sock.sendall(data.encode("utf-8"))
 
+#recebe confirmação
 
 def recv_json(sock: socket.socket) -> dict:
     raw = b""
@@ -35,6 +41,7 @@ def recv_json(sock: socket.socket) -> dict:
     line, _ = raw.split(b"\n", 1)
     return json.loads(line.decode("utf-8"))
 
+#define payload
 
 def heartbeat_payload() -> dict:
     return {
