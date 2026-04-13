@@ -296,9 +296,9 @@ def _request_worker_from_peer() -> None:
 
 def start_server() -> None:
     log.info("═" * 60)
-    log.info("  Master '%s'  |  %s:%s", MASTER_UUID, HOST, PORT)
-    log.info("  Threshold de sobrecarga: %d tarefas", OVERLOAD_THRESHOLD)
-    log.info("  Peers conhecidos: %s", PEER_ADDRESSES or "nenhum")
+    log.info("Master '%s'  |  %s:%s", MASTER_UUID, HOST, PORT)
+    log.info("Threshold de sobrecarga: %d tarefas", OVERLOAD_THRESHOLD)
+    log.info("Peers conhecidos: %s", PEER_ADDRESSES or "nenhum")
     log.info("═" * 60)
 
     for target, name in [

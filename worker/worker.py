@@ -72,9 +72,9 @@ def process_message(payload: dict, sock: socket.socket) -> bool:
     if task == Task.HEARTBEAT:
         status = payload.get("RESPONSE", "").upper()
         if status == Response.ALIVE:
-            log.info("♥  ALIVE  ✓  (Master '%s' ativo)", payload.get("SERVER_UUID"))
+            log.info("ALIVE (Master '%s' ativo)", payload.get("SERVER_UUID"))
         else:
-            log.warning("♥  Resposta inesperada ao heartbeat: '%s'", status)
+            log.warning("Resposta inesperada ao heartbeat: '%s'", status)
 
     elif task == Task.ASSIGN_TASK:
         task_id  = payload.get("TASK_ID", "?")
