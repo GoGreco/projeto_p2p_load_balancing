@@ -13,22 +13,37 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.protocol import Task, Response, send_json, LineBuffer, BUFFER_SIZE
 
-MASTER_UUID        = os.environ.get("MASTER_UUID",  "Master_4")
-HOST               = os.environ.get("MASTER_HOST",  "0.0.0.0")
-PORT               = int(os.environ.get("MASTER_PORT", 9000))
+# ──────────────────────────────────────────────────────────────
+# Configuração via variáveis de ambiente
+# ──────────────────────────────────────────────────────────────
+MASTER_UUID = os.environ.get("MASTER_UUID", "Master_A")
 
+# HOST = "0.0.0.0" → aceita conexões de qualquer interface da rede local.
+# NUNCA coloque um IP fixo aqui — isso causava o WinError 10061.
+HOST = "0.0.0.0"
+PORT = int(os.environ.get("MASTER_PORT", 9000))
 
-_PEERS_ENV         = os.environ.get("MASTER_PEERS", "")
+# MASTER_PEERS: lista de peers no formato "IP:PORTA,IP:PORTA"
+# Ex: MASTER_PEERS=192.168.1.10:9001
+# Cada Master precisa conhecer apenas o IP:porta dos outros Masters.
+_PEERS_ENV = os.environ.get("MASTER_PEERS", "")
 PEER_ADDRESSES: list[tuple[str, int]] = [
     (p.split(":")[0], int(p.split(":")[1]))
     for p in _PEERS_ENV.split(",") if p.strip()
 ]
 
-OVERLOAD_THRESHOLD = int(os.environ.get("OVERLOAD_THRESHOLD", 5)) 
-TASK_GEN_INTERVAL  = float(os.environ.get("TASK_GEN_INTERVAL", 2))
+# IP público/LAN deste Master, usado ao informar Workers onde se conectar.
+# Configure com o IP real desta máquina na rede local.
+# Ex: MASTER_PUBLIC_IP=192.168.1.10
+MASTER_PUBLIC_IP = os.environ.get("MASTER_PUBLIC_IP", "127.0.0.1")
+
+OVERLOAD_THRESHOLD   = int(os.environ.get("OVERLOAD_THRESHOLD", 5))
+TASK_GEN_INTERVAL    = float(os.environ.get("TASK_GEN_INTERVAL", 2))
 LOAD_REPORT_INTERVAL = float(os.environ.get("LOAD_REPORT_INTERVAL", 10))
 
-
+# ──────────────────────────────────────────────────────────────
+# Logging
+# ──────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)-12s %(levelname)s] %(message)s",
@@ -36,31 +51,38 @@ logging.basicConfig(
 )
 log = logging.getLogger(MASTER_UUID)
 
+
+# ──────────────────────────────────────────────────────────────
+# Estruturas de dados
+# ──────────────────────────────────────────────────────────────
 @dataclass
 class WorkerInfo:
-    worker_id: str
-    conn:      socket.socket
-    addr:      tuple
-    busy:      bool  = False
-    borrowed:  bool  = False          
-    owner:     str   = ""            
+    worker_id:  str
+    conn:       socket.socket
+    addr:       tuple
+    busy:       bool = False
+    borrowed:   bool = False
+    owner:      str  = ""
     tasks_done: int  = 0
 
 
 @dataclass
 class SimTask:
-    task_id:    str = field(default_factory=lambda: str(uuid.uuid4())[:8])
-    payload:    dict = field(default_factory=dict)
+    task_id:     str = field(default_factory=lambda: str(uuid.uuid4())[:8])
+    payload:     dict = field(default_factory=dict)
     assigned_to: Optional[str] = None
 
 
-_lock          = threading.Lock()
-workers:  dict[str, WorkerInfo] = {}   
-task_queue: list[SimTask]       = []   
-completed_tasks: int            = 0
+_lock           = threading.Lock()
+workers:         dict[str, WorkerInfo] = {}
+task_queue:      list[SimTask]         = []
+completed_tasks: int                   = 0
 
 
-def handle_heartbeat(payload: dict, _worker_id: str) -> dict:
+# ──────────────────────────────────────────────────────────────
+# Handlers de mensagens
+# ──────────────────────────────────────────────────────────────
+def handle_heartbeat(payload: dict, worker_id: str) -> dict:
     log.info("HEARTBEAT de '%s'", payload.get("SERVER_UUID", "?"))
     return {
         "SERVER_UUID": MASTER_UUID,
@@ -88,6 +110,11 @@ def handle_worker_status(payload: dict, worker_id: str) -> dict:
 
 
 def handle_borrow_worker(payload: dict, _: str) -> dict:
+    """
+    Outro Master (sobrecarregado) pede emprestado um Worker livre.
+    Envia ao Worker escolhido a instrução WORKER_MIGRATE com o IP/porta
+    do Master solicitante, para que ele reconecte via TCP.
+    """
     requesting_master = payload.get("SERVER_UUID", "?")
     target_host = payload.get("REDIRECT_HOST", "")
     target_port = int(payload.get("REDIRECT_PORT", 0))
@@ -95,14 +122,13 @@ def handle_borrow_worker(payload: dict, _: str) -> dict:
     with _lock:
         candidate = next(
             (w for w in workers.values() if not w.busy and not w.borrowed),
-            None
+            None,
         )
         if candidate:
             candidate.borrowed = True
             candidate.owner    = MASTER_UUID
             wid = candidate.worker_id
             log.info("↗  Emprestando Worker '%s' para Master '%s'", wid, requesting_master)
-            
             try:
                 send_json(candidate.conn, {
                     "SERVER_UUID": MASTER_UUID,
@@ -130,7 +156,7 @@ def handle_borrow_worker(payload: dict, _: str) -> dict:
 
 def handle_peer_hello(payload: dict, _: str) -> dict:
     peer_id = payload.get("SERVER_UUID", "?")
-    log.info(" Peer '%s' se apresentou.", peer_id)
+    log.info("Peer '%s' se apresentou.", peer_id)
     return {
         "SERVER_UUID": MASTER_UUID,
         "TASK":        Task.PEER_HELLO,
@@ -148,14 +174,18 @@ def handle_load_report(payload: dict, _: str) -> dict:
 
 
 TASK_HANDLERS = {
-    Task.HEARTBEAT:      handle_heartbeat,
-    Task.TASK_RESULT:    handle_task_result,
-    Task.WORKER_STATUS:  handle_worker_status,
-    Task.BORROW_WORKER:  handle_borrow_worker,
-    Task.PEER_HELLO:     handle_peer_hello,
-    Task.LOAD_REPORT:    handle_load_report,
+    Task.HEARTBEAT:     handle_heartbeat,
+    Task.TASK_RESULT:   handle_task_result,
+    Task.WORKER_STATUS: handle_worker_status,
+    Task.BORROW_WORKER: handle_borrow_worker,
+    Task.PEER_HELLO:    handle_peer_hello,
+    Task.LOAD_REPORT:   handle_load_report,
 }
 
+
+# ──────────────────────────────────────────────────────────────
+# Tratamento de conexão (thread por cliente)
+# ──────────────────────────────────────────────────────────────
 def handle_client(conn: socket.socket, addr: tuple) -> None:
     worker_id = None
     buf = LineBuffer()
@@ -172,6 +202,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 task_str = payload.get("TASK", "").upper()
                 sender   = payload.get("SERVER_UUID", "unknown")
 
+                # Registra Worker no primeiro HEARTBEAT recebido
                 if worker_id is None and task_str == Task.HEARTBEAT:
                     worker_id = sender
                     with _lock:
@@ -183,9 +214,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                             )
                     log.info("Worker '%s' registrado. Total: %d", worker_id, len(workers))
 
-                task_enum = task_str  
-                handler = TASK_HANDLERS.get(task_enum)
-
+                handler = TASK_HANDLERS.get(task_str)
                 if handler:
                     response = handler(payload, worker_id or sender)
                 else:
@@ -195,7 +224,6 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                         "TASK":        task_str,
                         "RESPONSE":    Response.UNKNOWN_TASK,
                     }
-
                 send_json(conn, response)
 
     except ConnectionResetError:
@@ -212,6 +240,9 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
             log.info("Socket %s:%s fechado.", *addr)
 
 
+# ──────────────────────────────────────────────────────────────
+# Threads de suporte
+# ──────────────────────────────────────────────────────────────
 def task_generator() -> None:
     ops = ["COMPUTE_FIBONACCI", "SORT_ARRAY", "HASH_DATA", "PING_ENDPOINT", "COMPRESS_DATA"]
     while True:
@@ -247,14 +278,15 @@ def task_dispatcher() -> None:
         except Exception as exc:
             log.error("Falha ao enviar tarefa para '%s': %s", worker.worker_id, exc)
             with _lock:
-                task_queue.insert(0, task)  
+                task_queue.insert(0, task)
+
 
 def load_monitor() -> None:
     while True:
         time.sleep(LOAD_REPORT_INTERVAL)
         with _lock:
-            current_load   = len(task_queue)
-            worker_count   = len(workers)
+            current_load = len(task_queue)
+            worker_count = len(workers)
 
         log.info("Carga atual: %d tarefas | %d workers ativos | %d concluídas",
                  current_load, worker_count, completed_tasks)
@@ -266,6 +298,11 @@ def load_monitor() -> None:
 
 
 def _request_worker_from_peer() -> None:
+    """
+    Contata um Master peer via TCP e solicita empréstimo de Worker.
+    O peer responde com BORROW_ACK e instrui o Worker a migrar via TCP
+    para MASTER_PUBLIC_IP:PORT deste Master.
+    """
     for peer_host, peer_port in PEER_ADDRESSES:
         try:
             log.info("Contactando peer %s:%s para empréstimo de Worker...", peer_host, peer_port)
@@ -273,7 +310,9 @@ def _request_worker_from_peer() -> None:
                 send_json(s, {
                     "SERVER_UUID":   MASTER_UUID,
                     "TASK":          Task.BORROW_WORKER,
-                    "REDIRECT_HOST": HOST if HOST != "0.0.0.0" else "127.0.0.1",
+                    # Informa ao peer o IP e porta REAIS deste Master na LAN,
+                    # para que o Worker migrado saiba onde se conectar via TCP.
+                    "REDIRECT_HOST": MASTER_PUBLIC_IP,
                     "REDIRECT_PORT": PORT,
                 })
                 raw = b""
@@ -286,7 +325,7 @@ def _request_worker_from_peer() -> None:
                     line = raw.split(b"\n")[0]
                     resp = json.loads(line.decode())
                     if resp.get("RESPONSE") == Response.OK:
-                        log.info("Empréstimo aceito por peer. Worker '%s' migrando.",
+                        log.info("Empréstimo aceito. Worker '%s' migrando para cá.",
                                  resp.get("WORKER_ID", "?"))
                         return
                     else:
@@ -294,9 +333,14 @@ def _request_worker_from_peer() -> None:
         except Exception as exc:
             log.warning("Falha ao contatar peer %s:%s — %s", peer_host, peer_port, exc)
 
+
+# ──────────────────────────────────────────────────────────────
+# Entrada principal
+# ──────────────────────────────────────────────────────────────
 def start_server() -> None:
     log.info("═" * 60)
-    log.info("Master '%s'  |  %s:%s", MASTER_UUID, HOST, PORT)
+    log.info("Master '%s'  |  escutando em 0.0.0.0:%s", MASTER_UUID, PORT)
+    log.info("IP público/LAN anunciado aos Workers: %s", MASTER_PUBLIC_IP)
     log.info("Threshold de sobrecarga: %d tarefas", OVERLOAD_THRESHOLD)
     log.info("Peers conhecidos: %s", PEER_ADDRESSES or "nenhum")
     log.info("═" * 60)
@@ -314,7 +358,7 @@ def start_server() -> None:
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind((HOST, PORT))
         srv.listen(50)
-        log.info("Master escutando em %s:%s ...", HOST, PORT)
+        log.info("Master escutando em 0.0.0.0:%s ...", PORT)
 
         while True:
             try:
@@ -326,7 +370,6 @@ def start_server() -> None:
                     name=f"Conn-{addr[0]}:{addr[1]}",
                 )
                 t.start()
-                log.debug("Thread '%s' iniciada (ativas: %d)", t.name, threading.active_count() - 1)
             except KeyboardInterrupt:
                 log.info("Servidor encerrado pelo operador.")
                 break
