@@ -4,10 +4,10 @@ import socket
 from enum import Enum
 from typing import Any
 
-BUFFER_SIZE = 4096
-DELIMITER   = b"\n"
+BUFFER_SIZE = 4096  # tamanho máximo de cada leitura do socket 
+DELIMITER   = b"\n" # separador de mensagens no stream TCP
 
-
+# 
 class Task(str, Enum):
     HEARTBEAT       = "HEARTBEAT"
     ASSIGN_TASK     = "ASSIGN_TASK"
