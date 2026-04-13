@@ -21,7 +21,6 @@ def spawn(script: str, env_extra: dict) -> subprocess.Popen:
     processes.append(p)
     return p
 
-
 def main() -> None:
     print("=" * 60)
     print("  Iniciando cluster distribuído — 2 Masters + 5 Workers")
@@ -34,7 +33,7 @@ def main() -> None:
     spawn(master_script, {
         "MASTER_UUID":        "Master_A",
         "MASTER_PORT":        "9000",
-        "MASTER_PEERS":       "127.0.0.1:9001",
+        "MASTER_PEERS":       "192.168.56.1:9001",
         "OVERLOAD_THRESHOLD": "4",
         "TASK_GEN_INTERVAL":  "2",
     })
@@ -44,7 +43,7 @@ def main() -> None:
     spawn(master_script, {
         "MASTER_UUID":        "Master_B",
         "MASTER_PORT":        "9001",
-        "MASTER_PEERS":       "127.0.0.1:9000",
+        "MASTER_PEERS":       "192.168.56.1:9000",
         "OVERLOAD_THRESHOLD": "4",
         "TASK_GEN_INTERVAL":  "3",
     })
@@ -54,7 +53,7 @@ def main() -> None:
     for i in range(1, 4):
         spawn(worker_script, {
             "WORKER_UUID": f"Worker_A{i}",
-            "MASTER_HOST": "127.0.0.1",
+            "MASTER_HOST": "192.168.56.1",
             "MASTER_PORT": "9000",
         })
         time.sleep(0.3)
@@ -62,7 +61,7 @@ def main() -> None:
     for i in range(1, 3):
         spawn(worker_script, {
             "WORKER_UUID": f"Worker_B{i}",
-            "MASTER_HOST": "127.0.0.1",
+            "MASTER_HOST": "192.168.56.1",
             "MASTER_PORT": "9001",
         })
         time.sleep(0.3)
