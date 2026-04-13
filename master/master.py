@@ -13,7 +13,7 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.protocol import Task, Response, send_json, LineBuffer, BUFFER_SIZE
 
-MASTER_UUID        = os.environ.get("MASTER_UUID",  "Master_A")
+MASTER_UUID        = os.environ.get("MASTER_UUID",  "Master_4")
 HOST               = os.environ.get("MASTER_HOST",  "0.0.0.0")
 PORT               = int(os.environ.get("MASTER_PORT", 9000))
 
