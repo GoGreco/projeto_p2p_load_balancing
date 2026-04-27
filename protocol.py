@@ -9,6 +9,7 @@ DELIMITER   = b"\n"
 
 
 class Task(str, Enum):
+    JOIN            = "JOIN"
     HEARTBEAT       = "HEARTBEAT"
     ASSIGN_TASK     = "ASSIGN_TASK"
     TASK_RESULT     = "TASK_RESULT"
