@@ -40,6 +40,8 @@ MASTER_PUBLIC_IP = os.environ.get("MASTER_PUBLIC_IP", "127.0.0.1")
 OVERLOAD_THRESHOLD   = int(os.environ.get("OVERLOAD_THRESHOLD", 5))
 TASK_GEN_INTERVAL    = float(os.environ.get("TASK_GEN_INTERVAL", 2))
 LOAD_REPORT_INTERVAL = float(os.environ.get("LOAD_REPORT_INTERVAL", 10))
+HEARTBEAT_CHECK_INTERVAL = float(os.environ.get("HEARTBEAT_CHECK_INTERVAL", 5))
+HEARTBEAT_TIMEOUT = float(os.environ.get("HEARTBEAT_TIMEOUT", 15))
 
 # ──────────────────────────────────────────────────────────────
 # Logging
@@ -64,6 +66,8 @@ class WorkerInfo:
     borrowed:   bool = False
     owner:      str  = ""
     tasks_done: int  = 0
+    last_heartbeat: float = field(default_factory=time.time)
+    current_task_id: Optional[str] = None
 
 
 @dataclass
@@ -77,17 +81,50 @@ _lock           = threading.Lock()
 workers:         dict[str, WorkerInfo] = {}
 task_queue:      list[SimTask]         = []
 completed_tasks: int                   = 0
+assigned_tasks:  dict[str, SimTask]    = {}
+
+
+def _remove_worker_and_requeue_locked(worker_id: str) -> None:
+    worker = workers.pop(worker_id, None)
+    if not worker:
+        return
+
+    if worker.current_task_id:
+        task = assigned_tasks.pop(worker.current_task_id, None)
+        if task:
+            task.assigned_to = None
+            task_queue.insert(0, task)
+            log.warning(
+                "Tarefa '%s' reencaminhada para fila após falha de '%s'.",
+                task.task_id,
+                worker_id,
+            )
 
 
 # ──────────────────────────────────────────────────────────────
 # Handlers de mensagens
 # ──────────────────────────────────────────────────────────────
 def handle_heartbeat(payload: dict, worker_id: str) -> dict:
-    log.info("HEARTBEAT de '%s'", payload.get("SERVER_UUID", "?"))
+    sender = payload.get("SERVER_UUID", "?")
+    with _lock:
+        tracked_worker = workers.get(worker_id) or workers.get(sender)
+        if tracked_worker:
+            tracked_worker.last_heartbeat = time.time()
+    log.info("HEARTBEAT de '%s'", sender)
     return {
         "SERVER_UUID": MASTER_UUID,
         "TASK":        Task.HEARTBEAT,
         "RESPONSE":    Response.ALIVE,
+    }
+
+
+def handle_join(payload: dict, _worker_id: str) -> dict:
+    sender = payload.get("SERVER_UUID", "?")
+    log.info("JOIN de '%s'", sender)
+    return {
+        "SERVER_UUID": MASTER_UUID,
+        "TASK":        Task.JOIN,
+        "RESPONSE":    Response.ACK,
     }
 
 
@@ -96,9 +133,11 @@ def handle_task_result(payload: dict, worker_id: str) -> dict:
     task_id = payload.get("TASK_ID", "?")
     result  = payload.get("RESULT")
     with _lock:
+        assigned_tasks.pop(task_id, None)
         completed_tasks += 1
         if worker_id in workers:
             workers[worker_id].busy = False
+            workers[worker_id].current_task_id = None
     log.info("Tarefa '%s' concluída por '%s'. Resultado: %s", task_id, worker_id, result)
     return {"SERVER_UUID": MASTER_UUID, "TASK": Task.TASK_RESULT, "RESPONSE": Response.ACK}
 
@@ -174,6 +213,7 @@ def handle_load_report(payload: dict, _: str) -> dict:
 
 
 TASK_HANDLERS = {
+    Task.JOIN:          handle_join,
     Task.HEARTBEAT:     handle_heartbeat,
     Task.TASK_RESULT:   handle_task_result,
     Task.WORKER_STATUS: handle_worker_status,
@@ -202,8 +242,8 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 task_str = payload.get("TASK", "").upper()
                 sender   = payload.get("SERVER_UUID", "unknown")
 
-                # Registra Worker no primeiro HEARTBEAT recebido
-                if worker_id is None and task_str == Task.HEARTBEAT:
+                # Registra Worker no JOIN e mantém fallback por HEARTBEAT
+                if worker_id is None and task_str in (Task.JOIN, Task.HEARTBEAT):
                     worker_id = sender
                     with _lock:
                         if worker_id not in workers:
@@ -212,6 +252,10 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                                 conn=conn,
                                 addr=addr,
                             )
+                        else:
+                            workers[worker_id].conn = conn
+                            workers[worker_id].addr = addr
+                        workers[worker_id].last_heartbeat = time.time()
                     log.info("Worker '%s' registrado. Total: %d", worker_id, len(workers))
 
                 handler = TASK_HANDLERS.get(task_str)
@@ -234,7 +278,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
         conn.close()
         if worker_id:
             with _lock:
-                workers.pop(worker_id, None)
+                _remove_worker_and_requeue_locked(worker_id)
             log.info("Worker '%s' desconectado. Total: %d", worker_id, len(workers))
         else:
             log.info("Socket %s:%s fechado.", *addr)
@@ -266,6 +310,9 @@ def task_dispatcher() -> None:
             worker = random.choice(free_workers)
             task   = task_queue.pop(0)
             worker.busy = True
+            worker.current_task_id = task.task_id
+            task.assigned_to = worker.worker_id
+            assigned_tasks[task.task_id] = task
 
         try:
             send_json(worker.conn, {
@@ -278,6 +325,11 @@ def task_dispatcher() -> None:
         except Exception as exc:
             log.error("Falha ao enviar tarefa para '%s': %s", worker.worker_id, exc)
             with _lock:
+                assigned_tasks.pop(task.task_id, None)
+                if worker.worker_id in workers:
+                    workers[worker.worker_id].busy = False
+                    workers[worker.worker_id].current_task_id = None
+                task.assigned_to = None
                 task_queue.insert(0, task)
 
 
@@ -295,6 +347,26 @@ def load_monitor() -> None:
             log.warning("SOBRECARGA DETECTADA (%d >= %d). Iniciando negociação P2P...",
                         current_load, OVERLOAD_THRESHOLD)
             _request_worker_from_peer()
+
+
+def heartbeat_monitor() -> None:
+    while True:
+        time.sleep(HEARTBEAT_CHECK_INTERVAL)
+        now = time.time()
+        stale_workers: list[tuple[str, socket.socket]] = []
+
+        with _lock:
+            for wid, info in list(workers.items()):
+                if now - info.last_heartbeat > HEARTBEAT_TIMEOUT:
+                    stale_workers.append((wid, info.conn))
+                    _remove_worker_and_requeue_locked(wid)
+
+        for wid, conn in stale_workers:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            log.warning("Worker '%s' removido por timeout de heartbeat.", wid)
 
 
 def _request_worker_from_peer() -> None:
@@ -349,6 +421,7 @@ def start_server() -> None:
         (task_generator,  "TaskGen"),
         (task_dispatcher, "TaskDispatch"),
         (load_monitor,    "LoadMonitor"),
+        (heartbeat_monitor, "HeartbeatMonitor"),
     ]:
         t = threading.Thread(target=target, name=name, daemon=True)
         t.start()

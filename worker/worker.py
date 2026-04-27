@@ -92,7 +92,14 @@ def process_message(payload: dict, sock: socket.socket) -> bool:
     global _pending_migration
     task = payload.get("TASK", "").upper()
 
-    if task == Task.HEARTBEAT:
+    if task == Task.JOIN:
+        status = payload.get("RESPONSE", "").upper()
+        if status == Response.ACK:
+            log.info("JOIN confirmado por '%s'", payload.get("SERVER_UUID"))
+        else:
+            log.warning("Resposta inesperada ao JOIN: '%s'", status)
+
+    elif task == Task.HEARTBEAT:
         status = payload.get("RESPONSE", "").upper()
         if status == Response.ALIVE:
             log.info("ALIVE recebido (Master '%s' ativo)", payload.get("SERVER_UUID"))
@@ -154,6 +161,11 @@ def connection_loop(host: str, port: int) -> dict | None:
         return None
 
     log.info("Conectado via TCP a %s:%s", host, port)
+    send_json(sock, {
+        "SERVER_UUID": WORKER_UUID,
+        "TASK":        Task.JOIN,
+    })
+    log.info("JOIN enviado → %s:%s", host, port)
 
     buf             = LineBuffer()
     last_heartbeat  = 0.0
