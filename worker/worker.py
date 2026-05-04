@@ -68,7 +68,6 @@ def execute_task(payload: dict) -> str:
         time.sleep(10)
         result = str(42)
 
-    time.sleep(random.uniform(0.2, 1.5))
     return result
 
 
