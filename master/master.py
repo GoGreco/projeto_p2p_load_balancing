@@ -77,19 +77,11 @@ class SimTask:
     assigned_to: Optional[str] = None
 
 
-<<<<<<< HEAD:master.py
-_lock          = threading.Lock()
-workers:  dict[str, WorkerInfo] = {}   
-task_queue: list[SimTask]       = []   
-completed_tasks: int            = 0
-assigned_tasks: dict[str, SimTask] = {}
-=======
 _lock           = threading.Lock()
 workers:         dict[str, WorkerInfo] = {}
 task_queue:      list[SimTask]         = []
 completed_tasks: int                   = 0
 assigned_tasks:  dict[str, SimTask]    = {}
->>>>>>> 27edec5d774f0d16611f7a299741bdf063923050:master/master.py
 
 
 def _remove_worker_and_requeue_locked(worker_id: str) -> None:
@@ -109,12 +101,9 @@ def _remove_worker_and_requeue_locked(worker_id: str) -> None:
             )
 
 
-<<<<<<< HEAD:master.py
-=======
 # ──────────────────────────────────────────────────────────────
 # Handlers de mensagens
 # ──────────────────────────────────────────────────────────────
->>>>>>> 27edec5d774f0d16611f7a299741bdf063923050:master/master.py
 def handle_heartbeat(payload: dict, worker_id: str) -> dict:
     sender = payload.get("SERVER_UUID", "?")
     with _lock:
@@ -224,15 +213,6 @@ def handle_load_report(payload: dict, _: str) -> dict:
 
 
 TASK_HANDLERS = {
-<<<<<<< HEAD:master.py
-    Task.JOIN:           handle_join,
-    Task.HEARTBEAT:      handle_heartbeat,
-    Task.TASK_RESULT:    handle_task_result,
-    Task.WORKER_STATUS:  handle_worker_status,
-    Task.BORROW_WORKER:  handle_borrow_worker,
-    Task.PEER_HELLO:     handle_peer_hello,
-    Task.LOAD_REPORT:    handle_load_report,
-=======
     Task.JOIN:          handle_join,
     Task.HEARTBEAT:     handle_heartbeat,
     Task.TASK_RESULT:   handle_task_result,
@@ -240,7 +220,6 @@ TASK_HANDLERS = {
     Task.BORROW_WORKER: handle_borrow_worker,
     Task.PEER_HELLO:    handle_peer_hello,
     Task.LOAD_REPORT:   handle_load_report,
->>>>>>> 27edec5d774f0d16611f7a299741bdf063923050:master/master.py
 }
 
 
@@ -263,10 +242,7 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
                 task_str = payload.get("TASK", "").upper()
                 sender   = payload.get("SERVER_UUID", "unknown")
 
-<<<<<<< HEAD:master.py
-=======
                 # Registra Worker no JOIN e mantém fallback por HEARTBEAT
->>>>>>> 27edec5d774f0d16611f7a299741bdf063923050:master/master.py
                 if worker_id is None and task_str in (Task.JOIN, Task.HEARTBEAT):
                     worker_id = sender
                     with _lock:
@@ -354,12 +330,8 @@ def task_dispatcher() -> None:
                     workers[worker.worker_id].busy = False
                     workers[worker.worker_id].current_task_id = None
                 task.assigned_to = None
-<<<<<<< HEAD:master.py
-                task_queue.insert(0, task)  
-=======
                 task_queue.insert(0, task)
 
->>>>>>> 27edec5d774f0d16611f7a299741bdf063923050:master/master.py
 
 def load_monitor() -> None:
     while True:

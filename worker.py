@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.protocol import Task, Response, send_json, LineBuffer, BUFFER_SIZE
 
 WORKER_UUID        = os.environ.get("WORKER_UUID",   "Worker_A1")
-MASTER_HOST        = os.environ.get("MASTER_HOST",   "127.0.0.1")
+MASTER_HOST        = os.environ.get("MASTER_HOST",   "10.62.217.41")
 MASTER_PORT        = int(os.environ.get("MASTER_PORT",  9000))
 HEARTBEAT_INTERVAL = float(os.environ.get("HEARTBEAT_INTERVAL", 6))
 RECONNECT_DELAY    = float(os.environ.get("RECONNECT_DELAY",    5))
@@ -48,6 +48,7 @@ def execute_task(payload: dict) -> str:
     elif op == "PING_ENDPOINT":
         time.sleep(random.uniform(0.1, 0.5))   
         result = f"200 OK ({random.randint(20, 200)}ms)"
+        
 
     elif op == "COMPRESS_DATA":
         import zlib

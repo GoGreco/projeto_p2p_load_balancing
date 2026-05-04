@@ -19,7 +19,7 @@ WORKER_UUID        = os.environ.get("WORKER_UUID",        "Worker_A1")
 # Ex: set MASTER_HOST=192.168.1.10   (Windows)
 #     export MASTER_HOST=192.168.1.10 (Linux/Mac)
 # Se não for definido, tenta localhost (útil apenas para testes locais).
-MASTER_HOST        = os.environ.get("MASTER_HOST",        "127.0.0.1")
+MASTER_HOST        = os.environ.get("MASTER_HOST",        "10.62.217.41")
 MASTER_PORT        = int(os.environ.get("MASTER_PORT",    9000))
 
 HEARTBEAT_INTERVAL = float(os.environ.get("HEARTBEAT_INTERVAL", 6))
@@ -45,34 +45,28 @@ def execute_task(payload: dict) -> str:
     n  = int(payload.get("N", 10))
 
     if op == "COMPUTE_FIBONACCI":
-        a, b = 0, 1
-        for _ in range(n):
-            a, b = b, a + b
-        result = str(a)
+        time.sleep(10)
+        result = str(42)
 
     elif op == "SORT_ARRAY":
-        arr = [random.randint(0, 1000) for _ in range(n)]
-        result = str(sorted(arr)[:3]) + "..."
+        time.sleep(10)
+        result = str(42)
 
     elif op == "HASH_DATA":
-        import hashlib
-        data = os.urandom(n * 8)
-        result = hashlib.sha256(data).hexdigest()[:16]
+        time.sleep(10)
+        result = str(42)
 
     elif op == "PING_ENDPOINT":
-        time.sleep(random.uniform(0.1, 0.5))
-        result = f"200 OK ({random.randint(20, 200)}ms)"
+        time.sleep(10)
+        result = str(42)
 
     elif op == "COMPRESS_DATA":
-        import zlib
-        data = bytes(range(n % 256)) * (n // 10 + 1)
-        compressed = zlib.compress(data)
-        ratio = len(data) / max(len(compressed), 1)
-        result = f"ratio={ratio:.2f}"
+        time.sleep(10)
+        result = str(42)
 
     else:
-        time.sleep(0.1)
-        result = "NOOP"
+        time.sleep(10)
+        result = str(42)
 
     time.sleep(random.uniform(0.2, 1.5))
     return result
