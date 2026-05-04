@@ -16,7 +16,7 @@ from shared.protocol import Task, Response, send_json, LineBuffer, BUFFER_SIZE
 # ──────────────────────────────────────────────────────────────
 # Configuração via variáveis de ambiente
 # ──────────────────────────────────────────────────────────────
-MASTER_UUID = os.environ.get("MASTER_UUID", "Master_A")
+MASTER_UUID = os.environ.get("MASTER_UUID", "Master_4")
 
 # HOST = "0.0.0.0" → aceita conexões de qualquer interface da rede local.
 # NUNCA coloque um IP fixo aqui — isso causava o WinError 10061.
