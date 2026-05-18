@@ -6,6 +6,7 @@ import random
 import socket
 import sys
 import time
+import uuid
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from shared.protocol import Task, Response, send_json, LineBuffer, BUFFER_SIZE
@@ -82,6 +83,7 @@ def execute_task(payload: dict) -> str:
 # Processamento de mensagens recebidas do Master
 # ──────────────────────────────────────────────────────────────
 _pending_migration: dict | None = None
+_original_master_to_register: str | None = None
 
 
 def process_message(payload: dict, sock: socket.socket) -> bool:
@@ -90,6 +92,40 @@ def process_message(payload: dict, sock: socket.socket) -> bool:
     e migrar para um novo Master (WORKER_MIGRATE).
     """
     global _pending_migration
+    # Suporta tanto o protocolo legado (campo TASK) como o novo (campo type)
+    if "type" in payload:
+        mtype = payload.get("type")
+        pl = payload.get("payload", {})
+        if mtype == "command_redirect":
+            # Novo formato: payload.new_master_address = "ip:porta"
+            addr = pl.get("new_master_address", "127.0.0.1:9000")
+            try:
+                host, sport = addr.split(":")
+                new_port = int(sport)
+            except Exception:
+                host, new_port = "127.0.0.1", 9000
+            log.info("Instrução (command_redirect) para migrar → %s:%s", host, new_port)
+            send_json(sock, {"type": "migrate_ack", "request_id": payload.get("request_id"), "payload": {"status": "ack"}})
+            global _pending_migration, _original_master_to_register
+            _pending_migration = {"host": host, "port": new_port, "original_master": f"{MASTER_HOST}:{MASTER_PORT}"}
+            _original_master_to_register = f"{MASTER_HOST}:{MASTER_PORT}"
+            return False
+
+        if mtype == "command_release":
+            # Instrução para retornar ao master original
+            orig = pl.get("original_master_address") or f"{MASTER_HOST}:{MASTER_PORT}"
+            try:
+                host, sport = orig.split(":")
+                new_port = int(sport)
+            except Exception:
+                host, new_port = MASTER_HOST, MASTER_PORT
+            log.info("Instrução (command_release) para retornar a %s:%s", host, new_port)
+            _pending_migration = {"host": host, "port": new_port, "original_master": None}
+            return False
+
+        # Outros tipos entre masters podem ser ignorados pelo worker
+        return True
+
     task = payload.get("TASK", "").upper()
 
     if task == Task.JOIN:
@@ -130,7 +166,7 @@ def process_message(payload: dict, sock: socket.socket) -> bool:
             "TASK":        Task.MIGRATE_ACK,
             "RESPONSE":    Response.ACK,
         })
-        _pending_migration = {"host": new_host, "port": new_port}
+        _pending_migration = {"host": new_host, "port": new_port, "original_master": f"{MASTER_HOST}:{MASTER_PORT}"}
         return False  # sinaliza para sair do loop e reconectar no novo Master
 
     return True
@@ -146,7 +182,9 @@ def connection_loop(host: str, port: int) -> dict | None:
     ou None se a conexão cair por outro motivo.
     """
     global _pending_migration
+    global _original_master_to_register
     _pending_migration = None
+    # _original_master_to_register may be set when we were instructed to migrate
 
     log.info("Conectando via TCP a %s:%s ...", host, port)
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -166,6 +204,23 @@ def connection_loop(host: str, port: int) -> dict | None:
         "TASK":        Task.JOIN,
     })
     log.info("JOIN enviado → %s:%s", host, port)
+
+    # Se estivemos migrando para este master, registramos como worker temporário
+    if _original_master_to_register:
+        try:
+            send_json(sock, {
+                "type": "register_temporary_worker",
+                "request_id": str(uuid.uuid4()),
+                "payload": {
+                    "worker_id": WORKER_UUID,
+                    "original_master_address": _original_master_to_register,
+                }
+            })
+            log.info("register_temporary_worker enviado para %s (original: %s)", host, _original_master_to_register)
+        except Exception:
+            pass
+        finally:
+            _original_master_to_register = None
 
     buf             = LineBuffer()
     last_heartbeat  = 0.0

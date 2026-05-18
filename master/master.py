@@ -68,6 +68,7 @@ class WorkerInfo:
     tasks_done: int  = 0
     last_heartbeat: float = field(default_factory=time.time)
     current_task_id: Optional[str] = None
+    original_master_address: Optional[str] = None
 
 
 @dataclass
@@ -77,19 +78,11 @@ class SimTask:
     assigned_to: Optional[str] = None
 
 
-<<<<<<< HEAD:master.py
-_lock          = threading.Lock()
-workers:  dict[str, WorkerInfo] = {}   
-task_queue: list[SimTask]       = []   
-completed_tasks: int            = 0
+_lock = threading.Lock()
+workers: dict[str, WorkerInfo] = {}
+task_queue: list[SimTask] = []
+completed_tasks: int = 0
 assigned_tasks: dict[str, SimTask] = {}
-=======
-_lock           = threading.Lock()
-workers:         dict[str, WorkerInfo] = {}
-task_queue:      list[SimTask]         = []
-completed_tasks: int                   = 0
-assigned_tasks:  dict[str, SimTask]    = {}
->>>>>>> 27edec5d774f0d16611f7a299741bdf063923050:master/master.py
 
 
 def _remove_worker_and_requeue_locked(worker_id: str) -> None:
@@ -109,12 +102,9 @@ def _remove_worker_and_requeue_locked(worker_id: str) -> None:
             )
 
 
-<<<<<<< HEAD:master.py
-=======
 # ──────────────────────────────────────────────────────────────
 # Handlers de mensagens
 # ──────────────────────────────────────────────────────────────
->>>>>>> 27edec5d774f0d16611f7a299741bdf063923050:master/master.py
 def handle_heartbeat(payload: dict, worker_id: str) -> dict:
     sender = payload.get("SERVER_UUID", "?")
     with _lock:
@@ -223,16 +213,127 @@ def handle_load_report(payload: dict, _: str) -> dict:
     return {"SERVER_UUID": MASTER_UUID, "TASK": Task.LOAD_REPORT, "RESPONSE": Response.ACK}
 
 
+def _handle_master_protocol(payload: dict, conn: socket.socket, addr: tuple) -> None:
+    """Handler para mensagens entre Masters no formato da Sprint 3.
+
+    Mensagens esperadas:
+    - request_help
+    - response_accepted
+    - response_rejected
+    - command_redirect
+    - register_temporary_worker
+    - command_release
+    - notify_worker_returned
+    """
+    mtype = payload.get("type")
+    rid = payload.get("request_id")
+    p = payload.get("payload", {})
+
+    if mtype == "request_help":
+        # Decide se pode oferecer workers
+        workers_needed = int(p.get("workers_needed", 1))
+        reply_address = p.get("reply_address")
+        with _lock:
+            candidates = [w for w in workers.values() if not w.busy and not w.borrowed]
+            offer = min(len(candidates), workers_needed)
+            chosen = candidates[:offer]
+            for w in chosen:
+                w.borrowed = True
+                w.owner = MASTER_UUID
+                w.original_master_address = f"{MASTER_PUBLIC_IP}:{PORT}"
+
+        if offer == 0:
+            resp = {"type": "response_rejected", "request_id": rid, "payload": {"reason": "no_workers_available"}}
+            send_json(conn, resp)
+            log.info("Rejeitado request_help de %s:%s — sem workers livres.", *addr)
+            return
+
+        details = []
+        for w in chosen:
+            # endereço informacional do worker — usamos o addr do socket
+            details.append({"id": w.worker_id, "address": f"{w.addr[0]}:{w.addr[1]}"})
+
+        resp = {"type": "response_accepted", "request_id": rid, "payload": {"workers_offered": offer, "worker_details": details}}
+        send_json(conn, resp)
+        log.info("Aceitou request_help (%d workers) — notificando workers para redirecionar.", offer)
+
+        # Envia command_redirect para cada worker escolhido, instruindo redirecionamento
+        import uuid as _uuid
+        for w in chosen:
+            try:
+                redirect_msg = {
+                    "type": "command_redirect",
+                    "request_id": str(_uuid.uuid4()),
+                    "payload": {"new_master_address": reply_address},
+                }
+                send_json(w.conn, redirect_msg)
+                # Compatibilidade: também enviar o formato antigo WORKER_MIGRATE
+                try:
+                    host, sport = reply_address.split(":")
+                    send_json(w.conn, {
+                        "SERVER_UUID": MASTER_UUID,
+                        "TASK":        Task.WORKER_MIGRATE,
+                        "NEW_HOST":    host,
+                        "NEW_PORT":    int(sport),
+                        "OWNER":       MASTER_UUID,
+                    })
+                except Exception:
+                    pass
+                log.info("Instruído Worker '%s' a conectar em %s", w.worker_id, reply_address)
+            except Exception as exc:
+                log.warning("Falha ao enviar command_redirect para %s: %s", w.worker_id, exc)
+
+    elif mtype == "response_accepted":
+        log.info("Recebida response_accepted de %s:%s — payload=%s", *addr, p)
+        # O master solicitante aguardará que o(s) worker(s) se conectem; nada extra aqui.
+
+    elif mtype == "response_rejected":
+        log.info("Recebida response_rejected de %s:%s — motivo=%s", *addr, p.get("reason"))
+
+    elif mtype == "register_temporary_worker":
+        # Um Worker se conectou a este Master temporariamente para executar tarefas.
+        worker_id = p.get("worker_id")
+        orig_addr = p.get("original_master_address")
+        log.info("Worker temporário '%s' registrando-se (original=%s)", worker_id, orig_addr)
+        # registra worker se já não estiver registrado
+        with _lock:
+            if worker_id not in workers:
+                workers[worker_id] = WorkerInfo(worker_id=worker_id, conn=conn, addr=addr)
+            workers[worker_id].borrowed = True
+            workers[worker_id].owner = MASTER_UUID
+            workers[worker_id].original_master_address = orig_addr
+            workers[worker_id].last_heartbeat = time.time()
+        # ACK
+        try:
+            send_json(conn, {"type": "register_ack", "request_id": rid, "payload": {"status": "ok"}})
+        except Exception:
+            pass
+
+    elif mtype == "command_release":
+        # Um peer (ou local) instrui um worker a retornar ao original — encaminhar notify ao original master
+        worker_id = p.get("payload", {}).get("worker_id")
+        orig = p.get("payload", {}).get("original_master_address")
+        log.info("Comando release recebido para worker %s, original=%s", worker_id, orig)
+        if orig and worker_id:
+            try:
+                host, sport = orig.split(":")
+                port = int(sport)
+                with socket.create_connection((host, port), timeout=5) as s:
+                    notify = {"type": "notify_worker_returned", "request_id": str(uuid.uuid4()), "payload": {"worker_id": worker_id}}
+                    send_json(s, notify)
+                    log.info("Notificado original master %s about return of %s", orig, worker_id)
+            except Exception as exc:
+                log.warning("Falha ao notificar original master %s: %s", orig, exc)
+
+    elif mtype == "notify_worker_returned":
+        wid = p.get("worker_id") or p.get("payload", {}).get("worker_id")
+        log.info("Peer notificou retorno do worker %s", wid)
+
+    else:
+        log.info("Mensagem master-to-master desconhecida: %s", mtype)
+
+
 TASK_HANDLERS = {
-<<<<<<< HEAD:master.py
-    Task.JOIN:           handle_join,
-    Task.HEARTBEAT:      handle_heartbeat,
-    Task.TASK_RESULT:    handle_task_result,
-    Task.WORKER_STATUS:  handle_worker_status,
-    Task.BORROW_WORKER:  handle_borrow_worker,
-    Task.PEER_HELLO:     handle_peer_hello,
-    Task.LOAD_REPORT:    handle_load_report,
-=======
     Task.JOIN:          handle_join,
     Task.HEARTBEAT:     handle_heartbeat,
     Task.TASK_RESULT:   handle_task_result,
@@ -240,7 +341,6 @@ TASK_HANDLERS = {
     Task.BORROW_WORKER: handle_borrow_worker,
     Task.PEER_HELLO:    handle_peer_hello,
     Task.LOAD_REPORT:   handle_load_report,
->>>>>>> 27edec5d774f0d16611f7a299741bdf063923050:master/master.py
 }
 
 
@@ -260,13 +360,20 @@ def handle_client(conn: socket.socket, addr: tuple) -> None:
             messages = buf.feed(chunk.decode("utf-8", errors="replace"))
 
             for payload in messages:
+                # Mensagens vindas de Workers usam o campo "TASK" (antigo protocolo).
+                # Mensagens entre Masters usam o campo "type" (Sprint 3).
+                if "type" in payload:
+                    try:
+                        _handle_master_protocol(payload, conn, addr)
+                    except Exception as exc:
+                        log.error("Erro ao tratar mensagem master: %s", exc)
+                    # Para mensagens entre masters não enviamos a resposta pelo fluxo antigo
+                    continue
+
                 task_str = payload.get("TASK", "").upper()
                 sender   = payload.get("SERVER_UUID", "unknown")
 
-<<<<<<< HEAD:master.py
-=======
                 # Registra Worker no JOIN e mantém fallback por HEARTBEAT
->>>>>>> 27edec5d774f0d16611f7a299741bdf063923050:master/master.py
                 if worker_id is None and task_str in (Task.JOIN, Task.HEARTBEAT):
                     worker_id = sender
                     with _lock:
@@ -354,12 +461,7 @@ def task_dispatcher() -> None:
                     workers[worker.worker_id].busy = False
                     workers[worker.worker_id].current_task_id = None
                 task.assigned_to = None
-<<<<<<< HEAD:master.py
-                task_queue.insert(0, task)  
-=======
                 task_queue.insert(0, task)
-
->>>>>>> 27edec5d774f0d16611f7a299741bdf063923050:master/master.py
 
 def load_monitor() -> None:
     while True:
@@ -375,6 +477,50 @@ def load_monitor() -> None:
             log.warning("SOBRECARGA DETECTADA (%d >= %d). Iniciando negociação P2P...",
                         current_load, OVERLOAD_THRESHOLD)
             _request_worker_from_peer()
+        # Se a carga diminuiu, devolve workers emprestados
+        if current_load < OVERLOAD_THRESHOLD and any(w.borrowed for w in workers.values()):
+            log.info("Carga baixa — tentando devolver workers emprestados se houver.")
+            _release_borrowed_workers()
+
+
+def _release_borrowed_workers() -> None:
+    """Envia `command_release` para workers emprestados para que retornem ao original.
+
+    Também notifica o original master via `notify_worker_returned` (melhor esforço).
+    """
+    import uuid as _uuid
+    with _lock:
+        borrowed = [w for w in list(workers.values()) if w.borrowed and w.original_master_address]
+
+    for w in borrowed:
+        orig = w.original_master_address
+        try:
+            # envia comando de liberação ao worker
+            send_json(w.conn, {
+                "type": "command_release",
+                "request_id": str(_uuid.uuid4()),
+                "payload": {"original_master_address": orig},
+            })
+            log.info("Enviado command_release para worker %s -> %s", w.worker_id, orig)
+        except Exception as exc:
+            log.warning("Falha ao enviar command_release para %s: %s", w.worker_id, exc)
+
+        # notifica o original master (melhor esforço)
+        try:
+            host, sport = orig.split(":")
+            port = int(sport)
+            with socket.create_connection((host, port), timeout=5) as s:
+                notify = {"type": "notify_worker_returned", "request_id": str(_uuid.uuid4()), "payload": {"worker_id": w.worker_id}}
+                send_json(s, notify)
+                log.info("Notificado original master %s sobre retorno de %s", orig, w.worker_id)
+        except Exception as exc:
+            log.warning("Falha ao notificar original master %s: %s", orig, exc)
+
+        # marca como não mais emprestado localmente
+        with _lock:
+            w.borrowed = False
+            w.owner = w.original_master_address or ""
+            w.original_master_address = None
 
 
 def heartbeat_monitor() -> None:
@@ -399,37 +545,83 @@ def heartbeat_monitor() -> None:
 
 def _request_worker_from_peer() -> None:
     """
-    Contata um Master peer via TCP e solicita empréstimo de Worker.
-    O peer responde com BORROW_ACK e instrui o Worker a migrar via TCP
-    para MASTER_PUBLIC_IP:PORT deste Master.
+    Implementa a negociação de Sprint 3 entre Masters usando mensagens JSON no formato:
+    { "type": "request_help"|..., "request_id": "<uuid4>", "payload": { ... } }
+
+    - envia `request_help` para cada peer e aguarda resposta (5s)
+    - se receber `response_accepted` com `worker_details`, registra a aceitação e espera
+      que o(s) Worker(s) se conectem (o Master que empresta envia o `command_redirect`).
+    Compatibiliza-se com peers simples ignorando respostas desconhecidas.
     """
+    import uuid as _uuid
+
+    request_id = str(_uuid.uuid4())
+    current_load = len(task_queue)
+    capacity = max(1, len(workers))
+    workers_needed = max(1, current_load - OVERLOAD_THRESHOLD)
+
+    msg = {
+        "type": "request_help",
+        "request_id": request_id,
+        "payload": {
+            "master_id": MASTER_UUID,
+            "current_load": current_load,
+            "capacity": capacity,
+            "workers_needed": workers_needed,
+            "reply_address": f"{MASTER_PUBLIC_IP}:{PORT}",
+        },
+    }
+
     for peer_host, peer_port in PEER_ADDRESSES:
         try:
-            log.info("Contactando peer %s:%s para empréstimo de Worker...", peer_host, peer_port)
+            log.info("Contactando peer %s:%s para request_help...", peer_host, peer_port)
             with socket.create_connection((peer_host, peer_port), timeout=5) as s:
-                send_json(s, {
-                    "SERVER_UUID":   MASTER_UUID,
-                    "TASK":          Task.BORROW_WORKER,
-                    # Informa ao peer o IP e porta REAIS deste Master na LAN,
-                    # para que o Worker migrado saiba onde se conectar via TCP.
-                    "REDIRECT_HOST": MASTER_PUBLIC_IP,
-                    "REDIRECT_PORT": PORT,
-                })
+                send_json(s, msg)
+
+                # aguarda uma única resposta com timeout
+                s.settimeout(5.0)
                 raw = b""
-                while b"\n" not in raw:
-                    chunk = s.recv(BUFFER_SIZE)
-                    if not chunk:
-                        break
-                    raw += chunk
-                if raw:
-                    line = raw.split(b"\n")[0]
+                try:
+                    while b"\n" not in raw:
+                        chunk = s.recv(BUFFER_SIZE)
+                        if not chunk:
+                            break
+                        raw += chunk
+                except socket.timeout:
+                    log.info("Peer %s:%s não respondeu a tempo.", peer_host, peer_port)
+                    continue
+
+                if not raw:
+                    continue
+                line = raw.split(b"\n")[0]
+                try:
                     resp = json.loads(line.decode())
-                    if resp.get("RESPONSE") == Response.OK:
-                        log.info("Empréstimo aceito. Worker '%s' migrando para cá.",
-                                 resp.get("WORKER_ID", "?"))
-                        return
-                    else:
-                        log.info("Peer %s:%s negou empréstimo.", peer_host, peer_port)
+                except Exception:
+                    log.warning("Resposta inválida de %s:%s", peer_host, peer_port)
+                    continue
+
+                rtype = resp.get("type")
+                rid = resp.get("request_id")
+                payload = resp.get("payload", {})
+
+                if rid != request_id:
+                    log.info("Ignorando resposta com request_id distinto de %s", request_id)
+                    continue
+
+                if rtype == "response_accepted":
+                    offered = payload.get("workers_offered", 0)
+                    details = payload.get("worker_details", [])
+                    log.info("Peer %s:%s aceitou ajudar — %d workers oferecidos.", peer_host, peer_port, offered)
+                    for d in details:
+                        wid = d.get("id")
+                        addr = d.get("address")
+                        log.info("Worker oferecido: %s @ %s", wid, addr)
+                    return
+                elif rtype == "response_rejected":
+                    reason = payload.get("reason", "?")
+                    log.info("Peer %s:%s recusou: %s", peer_host, peer_port, reason)
+                else:
+                    log.info("Peer %s:%s respondeu com tipo desconhecido: %s", peer_host, peer_port, rtype)
         except Exception as exc:
             log.warning("Falha ao contatar peer %s:%s — %s", peer_host, peer_port, exc)
 
