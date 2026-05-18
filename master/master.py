@@ -16,7 +16,7 @@ from shared.protocol import Task, Response, send_json, LineBuffer, BUFFER_SIZE
 # ──────────────────────────────────────────────────────────────
 # Configuração via variáveis de ambiente
 # ──────────────────────────────────────────────────────────────
-MASTER_UUID = os.environ.get("MASTER_UUID", "Master_A")
+MASTER_UUID = os.environ.get("MASTER_UUID", "Master_4")
 
 # HOST = "0.0.0.0" → aceita conexões de qualquer interface da rede local.
 # NUNCA coloque um IP fixo aqui — isso causava o WinError 10061.
@@ -78,11 +78,19 @@ class SimTask:
     assigned_to: Optional[str] = None
 
 
+<<<<<<< HEAD
 _lock = threading.Lock()
 workers: dict[str, WorkerInfo] = {}
 task_queue: list[SimTask] = []
 completed_tasks: int = 0
 assigned_tasks: dict[str, SimTask] = {}
+=======
+_lock           = threading.Lock()
+workers:         dict[str, WorkerInfo] = {}
+task_queue:      list[SimTask]         = []
+completed_tasks: int                   = 0
+assigned_tasks:  dict[str, SimTask]    = {}
+>>>>>>> 0b0de089557370d1bfeb792fd06698c50d59c5fd
 
 
 def _remove_worker_and_requeue_locked(worker_id: str) -> None:
@@ -463,6 +471,10 @@ def task_dispatcher() -> None:
                 task.assigned_to = None
                 task_queue.insert(0, task)
 
+<<<<<<< HEAD
+=======
+
+>>>>>>> 0b0de089557370d1bfeb792fd06698c50d59c5fd
 def load_monitor() -> None:
     while True:
         time.sleep(LOAD_REPORT_INTERVAL)
