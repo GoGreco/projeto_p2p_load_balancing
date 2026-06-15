@@ -27,15 +27,15 @@ OUTBOX_DLQ = os.path.join(OUTBOX_DIR, "dlq")
 # Outbox policies
 OUTBOX_MAX_ATTEMPTS = 5
 OUTBOX_TTL_SECONDS = 60 * 60 * 24  # 24 hours
-METRICS_PORT = 8000
+METRICS_PORT = 7000
 # Time-to-live for a pending offer made in response to request_help
 REQUEST_OFFER_TTL = 30  # seconds
 
 # Dashboard reporting configuration (PAYLOAD 4.1 targets)
-TCP_SOCKET_HOST = "nuted-ia.dev"
-TCP_SOCKET_PORT = 443
-TCP_SOCKET_TLS = True
-TCP_SOCKET_SNI = "nuted-ia.dev"
+TCP_SOCKET_HOST = "10.62.217.45"
+TCP_SOCKET_PORT = 8000
+TCP_SOCKET_TLS = False
+TCP_SOCKET_SNI = "10.62.217.45"
 FARM_REPORT_INTERVAL = 5  # seconds
 
 
@@ -95,12 +95,12 @@ def build_dashboard_payload() -> dict:
     # approximate utilization
     try:
         workers_utilization = (tasks_running / max(1, total_registered)) if total_registered > 0 else 0
-    except Exception:
+    except Exception:   
         workers_utilization = 0
 
     borrowed_list = []
     for wid, orig in borrowed_workers.items():
-        borrowed_list.append({"direction": "in", "peer_uuid": orig})
+        borrowed_list.append(total_registered)
 
     neighbors_list = []
     for nb in NEIGHBORS:
@@ -109,7 +109,7 @@ def build_dashboard_payload() -> dict:
 
     payload = {
         "server_uuid": SERVER_UUID,
-        "hostname": socket.gethostname(),
+        "hostname": SERVER_UUID,
         "role": "master",
         "task": "performance_report",
         "timestamp": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
@@ -392,11 +392,11 @@ RELEASE_THRESHOLD = 0.6
 # Neighbors directory (master_id, "ip:port").
 # Populate with known peers for negotiation. Example entries can be adjusted.
 NEIGHBORS = [
-    ("Master_7", "127.0.0.1:6000"),
+    ("Master_44", "10.62.217.41:10000"),
 ]
 
 # Number of initial tasks to populate on startup (configurable)
-INITIAL_TASK_COUNT = 60
+INITIAL_TASK_COUNT = 150
 
 # Registry of workers: key = WORKER_UUID, value = info dict
 workers_info: Dict[str, Dict[str, Any]] = {}

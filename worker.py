@@ -9,10 +9,10 @@ import uuid
 from typing import Optional
 from protocol import send_msg, recv_msg
 
-MASTER_HOST = "127.0.0.1"
-MASTER_PORT = 5000
+MASTER_HOST = "10.62.217.41"
+MASTER_PORT = 7000
 # Keep SERVER_UUID for tests that use it to craft heartbeat responses
-SERVER_UUID = "Master_4"
+SERVER_UUID = "Master_44"
 HEARTBEAT_INTERVAL = 10  # seconds
 
 # Redirect state shared across functions (mutable to avoid global declaration issues)
