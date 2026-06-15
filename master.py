@@ -17,6 +17,7 @@ import psutil
 import shutil
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import socketserver
+import sys
 
 # Configure structured logging
 logging.basicConfig(format='%(asctime)s %(levelname)s %(message)s', level=logging.INFO)
@@ -200,6 +201,41 @@ def dashboard_reporter_loop():
             logger.debug("Error building/sending dashboard payload: %s", e)
         # send farm_state in real-time every FARM_REPORT_INTERVAL seconds
         time.sleep(FARM_REPORT_INTERVAL)
+
+
+def verify_dashboard_connection(timeout: int = 5) -> bool:
+    """Attempt a single connection to the configured dashboard and send the PAYLOAD 4.1 once.
+
+    Returns True on successful send, False otherwise. Logs details.
+    """
+    try:
+        payload = build_dashboard_payload()
+        j = json.dumps(payload) + "\n"
+        host = TCP_SOCKET_HOST
+        port = TCP_SOCKET_PORT
+        if TCP_SOCKET_TLS:
+            ctx = ssl.create_default_context()
+            try:
+                with socket.create_connection((host, port), timeout=timeout) as sock:
+                    with ctx.wrap_socket(sock, server_hostname=TCP_SOCKET_SNI) as ssock:
+                        ssock.sendall(j.encode('utf-8'))
+                        logger.info("Dashboard verification payload sent to %s:%d (TLS)", host, port)
+                        return True
+            except Exception as e:
+                logger.warning("Dashboard TLS verification failed: %s", e)
+                return False
+        else:
+            try:
+                with socket.create_connection((host, port), timeout=timeout) as sock:
+                    sock.sendall(j.encode('utf-8'))
+                    logger.info("Dashboard verification payload sent to %s:%d (plain)", host, port)
+                    return True
+            except Exception as e:
+                logger.warning("Dashboard plain verification failed: %s", e)
+                return False
+    except Exception as e:
+        logger.warning("Error building/sending verification payload: %s", e)
+        return False
 
 
 class MetricsHandler(BaseHTTPRequestHandler):
@@ -872,6 +908,16 @@ def monitor_load_loop(host: str = HOST, port: int = PORT):
 
 
 if __name__ == "__main__":
+    # Allow a quick verification run: `python master.py --verify-dashboard`
+    if "--verify-dashboard" in sys.argv:
+        ok = verify_dashboard_connection()
+        if ok:
+            logger.info("Dashboard verification succeeded")
+            sys.exit(0)
+        else:
+            logger.error("Dashboard verification failed")
+            sys.exit(2)
+
     # Start server in background and populate initial tasks
     threading.Thread(target=start_server, daemon=True).start()
     logger.info("Populating %d initial tasks...", INITIAL_TASK_COUNT)

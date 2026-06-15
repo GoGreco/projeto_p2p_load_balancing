@@ -35,6 +35,19 @@ Este repositório contém uma implementação simples de balanceamento de carga 
    ```
    O worker se conecta ao master e envia um *heartbeat* a cada 10 s.
 
+### Envio do PAYLOAD 4.1 para Dashboard de Avaliação
+
+Para avaliação, o Master pode enviar o `PAYLOAD 4.1` (relatório de performance) para o dashboard remoto. As configurações esperadas são:
+
+- `TCP_SOCKET_HOST = "nuted-ia.dev"`
+- `TCP_SOCKET_PORT = 443`
+- `TCP_SOCKET_TLS = True`
+- `TCP_SOCKET_SNI = "nuted-ia.dev"`
+
+Defina essas variáveis de ambiente antes de iniciar o Master ou ajuste a configuração no código. Veja `docs/setup_instructions.md` para detalhes sobre certificação TLS/SNI e verificação local.
+
+O Master envia o `farm_state` em tempo real a cada 5 segundos enquanto estiver rodando.
+
 ### Enfileirar tarefas manualmente
 Você pode enfileirar tarefas diretamente no processo do master (útil para testes):
 
@@ -83,6 +96,9 @@ Se estiver usando o ambiente virtual do projeto, execute:
 
 ## Documentação de Decisões
 Veja `docs/decisions.md` para entender as escolhas de design, razões e próximos passos.
+
+## Setup e Configuração
+Consulte `docs/setup_instructions.md` para passos de preparação do ambiente, variáveis necessárias e exemplos de execução.
 
 ## Contribuindo
 1. Fork o repositório.
